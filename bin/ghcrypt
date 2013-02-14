@@ -1,0 +1,138 @@
+#! /bin/sh
+
+CONFIG_FILE=$HOME/.ghcrypt
+
+usage() {
+  echo 'ghcrypt v0.1'
+  echo 'Encrypt or decrypt file using GitHub username.'
+  echo
+  echo 'Usage:'
+  echo '    Encrypt and Sign: ghcrypt [--key privatekey] file github-username(reciever)'
+  echo '  Verify and Decrypt: ghcrypt [--key privatekey] file.enc.tar github-username(sender)'
+  echo
+}
+
+if [ x"$1" = x ]; then
+  usage
+  exit 1
+fi
+
+if [ x"$1" = "x--help" -o x"$1" = "x-h" ]; then
+  usage
+  exit
+fi
+
+if [ x"$1" = "x--key" ]; then
+  shift
+  PRIVATE_KEY=$1
+  shift
+fi
+
+FILE=$1
+GITHUB_USER=$2
+
+if [ x"$PRIVATE_KEY" = x ]; then
+  if [ ! -f $CONFIG_FILE ]; then
+    echo 'ERROR: No config file:' $CONFIG_FILE
+    echo
+    echo '  Write your GitHub private key path:'
+    echo '  $ echo /home/yourname/.ssh/id_rsa > ~/.ghcrypt'
+    echo '  $ chmod 400 ~/.ghcrypt'
+    echo
+    exit 1
+  fi
+  PRIVATE_KEY=$(cat $CONFIG_FILE)
+fi
+
+if [ ! -f $FILE ]; then
+  echo "ERROR: Target file must be file: $FILE"
+  exit 1
+fi
+if [ x"$GITHUB_USER" = x ]; then
+  echo "ERROR: GitHub user name required."
+  usage
+  exit 1
+fi
+if [ ! -f $PRIVATE_KEY ]; then
+  echo "ERROR: Private key doesn't exist: $PRIVATE_KEY"
+  exit 1
+fi
+
+download_publickey() {
+  wget -O $PUBLIC_KEY https://github.com/$GITHUB_USER.keys || exit $?
+
+  FINGERPRINT=`ssh-keygen -l -f $PUBLIC_KEY` || exit $?
+  echo "----------------------------------------------------------------"
+  echo "$1: $GITHUB_USER"
+  echo "  https://github.com/$GITHUB_USER"
+  echo "  $FINGERPRINT"
+  echo "----------------------------------------------------------------"
+  ssh-keygen -f $PUBLIC_KEY -e -m PKCS8 > $PUBLIC_KEY.pem || exit $?
+}
+
+
+case "$FILE" in
+*\.enc\.tar)
+  BASENAME=$(basename -s .tar $FILE)
+  TMP_DIR=$BASENAME
+  INFILE=$TMP_DIR/$BASENAME
+  SIGFILE=$TMP_DIR/$BASENAME.sig
+  OUTFILE=$(basename -s .enc.tar $FILE)
+
+  if [ -e $TMP_DIR ]; then
+    echo "ERROR: $TMP_DIR already exits."
+    exit 1
+  fi
+  if [ -e $OUTFILE ]; then
+    echo "ERROR: $OUTFILE already exits."
+    exit 1
+  fi
+
+  PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
+
+  tar xf $FILE || exit $?
+  download_publickey Sender
+
+  openssl sha1 -verify $PUBLIC_KEY.pem -signature $SIGFILE $INFILE || exit $?
+  openssl rsautl -in $INFILE -inkey $PRIVATE_KEY -decrypt -out $OUTFILE || exit $?
+
+  rm $INFILE $INFILE.sig
+  rm $PUBLIC_KEY $PUBLIC_KEY.pem
+  rmdir $TMP_DIR
+
+  echo
+  echo "Successfully Verified and Decrypted!"
+  echo "  $FILE --> $OUTFILE"
+  echo
+  ;;
+*)
+  TMP_DIR=$FILE.enc
+
+  if [ -e $TMP_DIR ]; then
+    echo "ERROR: $TMP_DIR already exits."
+    exit 1
+  fi
+  if [ -e $TMP_DIR.tar ]; then
+    echo "ERROR: $TMP_DIR.tar already exits."
+    exit 1
+  fi
+  mkdir $TMP_DIR || exit $?
+
+  PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
+
+  download_publickey Reciever
+
+  openssl rsautl -in $FILE -inkey $PUBLIC_KEY.pem -pubin -encrypt -out $TMP_DIR/$FILE.enc || exit $?
+  openssl sha1 -sign $PRIVATE_KEY $TMP_DIR/$FILE.enc > $TMP_DIR/$FILE.enc.sig || exit $?
+
+  rm $PUBLIC_KEY $PUBLIC_KEY.pem
+  tar cf $FILE.enc.tar $TMP_DIR
+  rm $TMP_DIR/$FILE.enc $TMP_DIR/$FILE.enc.sig
+  rmdir $TMP_DIR
+
+  echo
+  echo "Successfully Encrypted and Signed!"
+  echo "  $FILE --> $FILE.enc.tar"
+  echo
+  ;;
+esac
