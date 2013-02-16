@@ -1,9 +1,10 @@
 #! /bin/sh
 
 CONFIG_FILE=$HOME/.ghcrypt
+VERSION=0.2
 
 usage() {
-  echo 'ghcrypt v0.1'
+  echo "ghcrypt v$VERSION"
   echo 'Encrypt or decrypt file using GitHub username.'
   echo
   echo 'Usage:'
@@ -73,11 +74,11 @@ download_publickey() {
 
 case "$FILE" in
 *\.enc\.tar)
-  BASENAME=$(basename -s .tar $FILE)
+  BASENAME="${FILE%.*}"
   TMP_DIR=$BASENAME
   INFILE=$TMP_DIR/$BASENAME
   SIGFILE=$TMP_DIR/$BASENAME.sig
-  OUTFILE=$(basename -s .enc.tar $FILE)
+  OUTFILE="${BASENAME%.*}"
 
   if [ -e $TMP_DIR ]; then
     echo "ERROR: $TMP_DIR already exits."
