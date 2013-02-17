@@ -1,7 +1,8 @@
 #! /bin/sh
 
 CONFIG_FILE=$HOME/.ghcrypt
-VERSION=0.2
+VERSION=0.3
+AES_PASSPHRASE_LENGTH=128 # bytes
 
 usage() {
   echo "ghcrypt v$VERSION"
@@ -62,15 +63,22 @@ fi
 download_publickey() {
   wget -O $PUBLIC_KEY https://github.com/$GITHUB_USER.keys || exit $?
 
-  FINGERPRINT=`ssh-keygen -l -f $PUBLIC_KEY` || exit $?
+  FINGERPRINT=$(ssh-keygen -l -f $PUBLIC_KEY) || exit $?
   echo "----------------------------------------------------------------"
   echo "$1: $GITHUB_USER"
   echo "  https://github.com/$GITHUB_USER"
   echo "  $FINGERPRINT"
   echo "----------------------------------------------------------------"
+
+  # require OpenSSH 5.6 or later.
+  # http://www.openssh.com/txt/release-5.6
+  #
+  # * Allow ssh-keygen(1) to import (-i) and export (-e) of PEM and PKCS#8
+  #   keys in addition to RFC4716 (SSH.COM) encodings via a new -m option
+  #   (bz#1749)
+  #
   ssh-keygen -f $PUBLIC_KEY -e -m PKCS8 > $PUBLIC_KEY.pem || exit $?
 }
-
 
 case "$FILE" in
 *\.enc\.tar)
@@ -78,6 +86,7 @@ case "$FILE" in
   TMP_DIR=$BASENAME
   INFILE=$TMP_DIR/$BASENAME
   SIGFILE=$TMP_DIR/$BASENAME.sig
+  AES_KEY=$TMP_DIR/key
   OUTFILE="${BASENAME%.*}"
 
   if [ -e $TMP_DIR ]; then
@@ -94,12 +103,19 @@ case "$FILE" in
   tar xf $FILE || exit $?
   download_publickey Sender
 
+  # Verify encrypted file using downloaded public key.
   openssl sha1 -verify $PUBLIC_KEY.pem -signature $SIGFILE $INFILE || exit $?
-  openssl rsautl -in $INFILE -inkey $PRIVATE_KEY -decrypt -out $OUTFILE || exit $?
+
+  # Decrypt AES passphrase using your private key.
+  openssl rsautl -decrypt -in $AES_KEY.enc -out $AES_KEY -inkey $PRIVATE_KEY || exit $?
+
+  # Decrypt file using AES passphrase
+  openssl aes-256-cbc -d -in $INFILE -out $OUTFILE -pass "file:$AES_KEY" || exit $?
 
   rm $INFILE $INFILE.sig
   rm $PUBLIC_KEY $PUBLIC_KEY.pem
-  rmdir $TMP_DIR
+  rm $AES_KEY $AES_KEY.enc
+  rmdir $TMP_DIR || exit $?
 
   echo
   echo "Successfully Verified and Decrypted!"
@@ -120,16 +136,32 @@ case "$FILE" in
   mkdir $TMP_DIR || exit $?
 
   PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
+  AES_KEY=$TMP_DIR/key
+  OUTFILE=$TMP_DIR/$FILE.enc
 
+  # Download OpenSSH public key from GitHub and convert to PKCS#8 format.
   download_publickey Reciever
 
-  openssl rsautl -in $FILE -inkey $PUBLIC_KEY.pem -pubin -encrypt -out $TMP_DIR/$FILE.enc || exit $?
-  openssl sha1 -sign $PRIVATE_KEY $TMP_DIR/$FILE.enc > $TMP_DIR/$FILE.enc.sig || exit $?
+  # Generate random AES passphrase.
+  cat /dev/urandom | LANG=C tr -dc '[:graph:]' | head -c $AES_PASSPHRASE_LENGTH > $AES_KEY || exit $?
 
+  # Encrypt file using AES passphrase.
+  openssl aes-256-cbc -e -in $FILE -out $OUTFILE -pass "file:$AES_KEY" || exit $?
+
+  # Encrypt AES passphrase using downloaded publick key.
+  openssl rsautl -encrypt -in $AES_KEY -out $AES_KEY.enc -inkey $PUBLIC_KEY.pem -pubin || exit $?
+
+  # Remove AES passphrase file.
+  rm $AES_KEY || exit $?
+
+  # Sign encrypted file using your private key.
+  openssl sha1 -sign $PRIVATE_KEY $OUTFILE > $TMP_DIR/$FILE.enc.sig || exit $?
+
+  # Cleaning.
   rm $PUBLIC_KEY $PUBLIC_KEY.pem
   tar cf $FILE.enc.tar $TMP_DIR
-  rm $TMP_DIR/$FILE.enc $TMP_DIR/$FILE.enc.sig
-  rmdir $TMP_DIR
+  rm $TMP_DIR/$FILE.enc $TMP_DIR/$FILE.enc.sig $AES_KEY.enc
+  rmdir $TMP_DIR || exit $?
 
   echo
   echo "Successfully Encrypted and Signed!"
