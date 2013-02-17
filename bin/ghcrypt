@@ -1,7 +1,7 @@
 #! /bin/sh
 
 CONFIG_FILE=$HOME/.ghcrypt
-VERSION=0.3
+VERSION=0.4
 AES_PASSPHRASE_LENGTH=128 # bytes
 
 usage() {
@@ -86,8 +86,8 @@ case "$FILE" in
   TMP_DIR=$BASENAME
   INFILE=$TMP_DIR/$BASENAME
   SIGFILE=$TMP_DIR/$BASENAME.sig
-  AES_KEY=$TMP_DIR/key
   OUTFILE="${BASENAME%.*}"
+  AES_KEY=$TMP_DIR/$OUTFILE.key
 
   if [ -e $TMP_DIR ]; then
     echo "ERROR: $TMP_DIR already exits."
@@ -112,7 +112,7 @@ case "$FILE" in
   # Decrypt file using AES passphrase
   openssl aes-256-cbc -d -in $INFILE -out $OUTFILE -pass "file:$AES_KEY" || exit $?
 
-  rm $INFILE $INFILE.sig
+  rm $INFILE $SIGFILE
   rm $PUBLIC_KEY $PUBLIC_KEY.pem
   rm $AES_KEY $AES_KEY.enc
   rmdir $TMP_DIR || exit $?
@@ -136,8 +136,9 @@ case "$FILE" in
   mkdir $TMP_DIR || exit $?
 
   PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
-  AES_KEY=$TMP_DIR/key
+  AES_KEY=$TMP_DIR/$FILE.key
   OUTFILE=$TMP_DIR/$FILE.enc
+  SIGFILE=$OUTFILE.sig
 
   # Download OpenSSH public key from GitHub and convert to PKCS#8 format.
   download_publickey Reciever
@@ -155,12 +156,12 @@ case "$FILE" in
   rm $AES_KEY || exit $?
 
   # Sign encrypted file using your private key.
-  openssl sha1 -sign $PRIVATE_KEY $OUTFILE > $TMP_DIR/$FILE.enc.sig || exit $?
+  openssl sha1 -sign $PRIVATE_KEY $OUTFILE > $SIGFILE || exit $?
 
   # Cleaning.
   rm $PUBLIC_KEY $PUBLIC_KEY.pem
   tar cf $FILE.enc.tar $TMP_DIR
-  rm $TMP_DIR/$FILE.enc $TMP_DIR/$FILE.enc.sig $AES_KEY.enc
+  rm $OUTFILE $SIGFILE $AES_KEY.enc
   rmdir $TMP_DIR || exit $?
 
   echo
