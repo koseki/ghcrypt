@@ -26,16 +26,16 @@ fi
 
 if [ x"$1" = "x--key" ]; then
   shift
-  PRIVATE_KEY=$1
+  PRIVATE_KEY="$1"
   shift
 fi
 
-FILE=$1
-GITHUB_USER=$2
+FILE="$1"
+GITHUB_USER="$2"
 
 if [ x"$PRIVATE_KEY" = x ]; then
-  if [ ! -f $CONFIG_FILE ]; then
-    echo 'ERROR: No config file:' $CONFIG_FILE
+  if [ ! -f "$CONFIG_FILE" ]; then
+    echo "ERROR: No config file: $CONFIG_FILE"
     echo
     echo '  Write your GitHub private key path:'
     echo '  $ echo /home/yourname/.ssh/id_rsa > ~/.ghcrypt'
@@ -43,10 +43,10 @@ if [ x"$PRIVATE_KEY" = x ]; then
     echo
     exit 1
   fi
-  PRIVATE_KEY=$(cat $CONFIG_FILE)
+  PRIVATE_KEY=$(cat "$CONFIG_FILE")
 fi
 
-if [ ! -f $FILE ]; then
+if [ ! -f "$FILE" ]; then
   echo "ERROR: Target file must be file: $FILE"
   exit 1
 fi
@@ -61,9 +61,9 @@ if [ ! -f $PRIVATE_KEY ]; then
 fi
 
 download_publickey() {
-  wget -O $PUBLIC_KEY https://github.com/$GITHUB_USER.keys || exit $?
+  wget -O "$PUBLIC_KEY" "https://github.com/$GITHUB_USER.keys" || exit $?
 
-  FINGERPRINT=$(ssh-keygen -l -f $PUBLIC_KEY) || exit $?
+  FINGERPRINT=$(ssh-keygen -l -f "$PUBLIC_KEY") || exit $?
   echo "----------------------------------------------------------------"
   echo "$1: $GITHUB_USER"
   echo "  https://github.com/$GITHUB_USER"
@@ -77,45 +77,48 @@ download_publickey() {
   #   keys in addition to RFC4716 (SSH.COM) encodings via a new -m option
   #   (bz#1749)
   #
-  ssh-keygen -f $PUBLIC_KEY -e -m PKCS8 > $PUBLIC_KEY.pem || exit $?
+  ssh-keygen -f "$PUBLIC_KEY" -e -m PKCS8 > "$PUBLIC_KEY.pem" || exit $?
 }
 
 case "$FILE" in
 *\.enc\.tar)
   BASENAME="${FILE%.*}"
-  TMP_DIR=$BASENAME
-  INFILE=$TMP_DIR/$BASENAME
-  SIGFILE=$TMP_DIR/$BASENAME.sig
+  TMP_DIR="$BASENAME"
+  INFILE="$TMP_DIR/$BASENAME"
+  SIGFILE="$TMP_DIR/$BASENAME.sig"
   OUTFILE="${BASENAME%.*}"
-  AES_KEY=$TMP_DIR/$OUTFILE.key
+  AES_KEY="$TMP_DIR/$OUTFILE.key"
 
-  if [ -e $TMP_DIR ]; then
+  if [ -e "$TMP_DIR" ]; then
     echo "ERROR: $TMP_DIR already exits."
     exit 1
   fi
-  if [ -e $OUTFILE ]; then
+  if [ -e "$OUTFILE" ]; then
     echo "ERROR: $OUTFILE already exits."
     exit 1
   fi
 
-  PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
+  PUBLIC_KEY="$TMP_DIR/$GITHUB_USER.keys"
 
-  tar xf $FILE || exit $?
+  tar xf "$FILE" || exit $?
   download_publickey Sender
 
   # Verify encrypted file using downloaded public key.
-  openssl sha1 -verify $PUBLIC_KEY.pem -signature $SIGFILE $INFILE || exit $?
+  openssl sha1 -verify "$PUBLIC_KEY.pem" -signature "$SIGFILE" "$INFILE" || exit $?
 
   # Decrypt AES passphrase using your private key.
-  openssl rsautl -decrypt -in $AES_KEY.enc -out $AES_KEY -inkey $PRIVATE_KEY || exit $?
+  openssl rsautl -decrypt -in "$AES_KEY.enc" -out "$AES_KEY" -inkey "$PRIVATE_KEY" || exit $?
 
   # Decrypt file using AES passphrase
-  openssl aes-256-cbc -d -in $INFILE -out $OUTFILE -pass "file:$AES_KEY" || exit $?
+  openssl aes-256-cbc -d -in "$INFILE" -out "$OUTFILE" -pass "file:$AES_KEY" || exit $?
 
-  rm $INFILE $SIGFILE
-  rm $PUBLIC_KEY $PUBLIC_KEY.pem
-  rm $AES_KEY $AES_KEY.enc
-  rmdir $TMP_DIR || exit $?
+  rm "$AES_KEY"
+  rm "$AES_KEY.enc"
+  rm "$INFILE"
+  rm "$SIGFILE"
+  rm "$PUBLIC_KEY"
+  rm "$PUBLIC_KEY.pem"
+  rmdir "$TMP_DIR" || exit $?
 
   echo
   echo "Successfully Verified and Decrypted!"
@@ -123,46 +126,49 @@ case "$FILE" in
   echo
   ;;
 *)
-  TMP_DIR=$FILE.enc
+  TMP_DIR="$FILE.enc"
 
-  if [ -e $TMP_DIR ]; then
+  if [ -e "$TMP_DIR" ]; then
     echo "ERROR: $TMP_DIR already exits."
     exit 1
   fi
-  if [ -e $TMP_DIR.tar ]; then
+  if [ -e "$TMP_DIR.tar" ]; then
     echo "ERROR: $TMP_DIR.tar already exits."
     exit 1
   fi
-  mkdir $TMP_DIR || exit $?
+  mkdir "$TMP_DIR" || exit $?
 
-  PUBLIC_KEY=$TMP_DIR/$GITHUB_USER.keys
-  AES_KEY=$TMP_DIR/$FILE.key
-  OUTFILE=$TMP_DIR/$FILE.enc
-  SIGFILE=$OUTFILE.sig
+  PUBLIC_KEY="$TMP_DIR/$GITHUB_USER.keys"
+  AES_KEY="$TMP_DIR/$FILE.key"
+  OUTFILE="$TMP_DIR/$FILE.enc"
+  SIGFILE="$OUTFILE.sig"
 
   # Download OpenSSH public key from GitHub and convert to PKCS#8 format.
   download_publickey Reciever
 
   # Generate random AES passphrase.
-  cat /dev/urandom | LANG=C tr -dc '[:graph:]' | head -c $AES_PASSPHRASE_LENGTH > $AES_KEY || exit $?
+  cat /dev/urandom | LANG=C tr -dc '[:graph:]' | head -c "$AES_PASSPHRASE_LENGTH" > "$AES_KEY" || exit $?
 
   # Encrypt file using AES passphrase.
-  openssl aes-256-cbc -e -in $FILE -out $OUTFILE -pass "file:$AES_KEY" || exit $?
+  openssl aes-256-cbc -e -in "$FILE" -out "$OUTFILE" -pass "file:$AES_KEY" || exit $?
 
   # Encrypt AES passphrase using downloaded publick key.
-  openssl rsautl -encrypt -in $AES_KEY -out $AES_KEY.enc -inkey $PUBLIC_KEY.pem -pubin || exit $?
+  openssl rsautl -encrypt -in "$AES_KEY" -out "$AES_KEY.enc" -inkey "$PUBLIC_KEY.pem" -pubin || exit $?
 
   # Remove AES passphrase file.
-  rm $AES_KEY || exit $?
+  rm "$AES_KEY" || exit $?
 
   # Sign encrypted file using your private key.
-  openssl sha1 -sign $PRIVATE_KEY $OUTFILE > $SIGFILE || exit $?
+  openssl sha1 -sign "$PRIVATE_KEY" "$OUTFILE" > "$SIGFILE" || exit $?
 
   # Cleaning.
-  rm $PUBLIC_KEY $PUBLIC_KEY.pem
-  tar cf $FILE.enc.tar $TMP_DIR
-  rm $OUTFILE $SIGFILE $AES_KEY.enc
-  rmdir $TMP_DIR || exit $?
+  rm "$PUBLIC_KEY"
+  rm "$PUBLIC_KEY.pem"
+  tar cf "$FILE.enc.tar" "$TMP_DIR"
+  rm "$OUTFILE"
+  rm "$SIGFILE"
+  rm "$AES_KEY.enc"
+  rmdir "$TMP_DIR" || exit $?
 
   echo
   echo "Successfully Encrypted and Signed!"
